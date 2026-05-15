@@ -68,6 +68,7 @@ const (
 	CLIFieldsFile                       = "collectors"
 	CLIAddress                          = "address"
 	CLICollectInterval                  = "collect-interval"
+	CLIOCI                              = "oci"
 	CLIKubernetes                       = "kubernetes"
 	CLIKubernetesEnablePodLabels        = "kubernetes-enable-pod-labels"
 	CLIKubernetesEnablePodUID           = "kubernetes-enable-pod-uid"
@@ -140,6 +141,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   30000,
 			Usage:   "Interval of time at which point metrics are collected. Unit is milliseconds (ms).",
 			EnvVars: []string{"DCGM_EXPORTER_INTERVAL"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIOCI,
+			Value:   false,
+			Usage:   "Enable mapping metrics to OCI containers (Docker/Podman/containerd) via cgroup parsing. Mutually exclusive with --kubernetes.",
+			EnvVars: []string{"DCGM_EXPORTER_OCI"},
 		},
 		&cli.BoolFlag{
 			Name:    CLIKubernetes,
@@ -475,17 +482,18 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 		defer dcgmCleanup()
 	}
 
-	// Initialize NVML Provider Instance only if Kubernetes mode is enabled
-	// NVML is only needed for MIG device UUID parsing in Kubernetes environments
-	if config.Kubernetes {
+	// Initialize NVML Provider Instance if OCI or Kubernetes mode is enabled
+	// NVML is needed for enumerating GPU processes in OCI runtimes
+	// and for MIG device UUID parsing in Kubernetes environments
+	if config.OCI || config.Kubernetes {
 		err = nvmlprovider.Initialize()
 		if err != nil && !config.DisableStartupValidate {
 			return err
 		}
 		defer nvmlprovider.Client().Cleanup()
-		slog.Info("NVML provider successfully initialized for Kubernetes MIG support")
+		slog.Info("NVML provider successfully initialized")
 	} else {
-		slog.Info("NVML provider skipped (not running in Kubernetes mode)")
+		slog.Info("NVML provider skipped (not running in OCI or Kubernetes modes")
 	}
 
 	slog.Info("DCGM successfully initialized!")
@@ -827,7 +835,7 @@ func handleGPUTopologyChange(ctx context.Context, server *server.MetricsServer, 
 	dcgmprovider.Initialize(config)
 
 	// Step 3b: Reinitialize NVML
-	if config.Kubernetes && config.KubernetesVirtualGPUs {
+	if config.OCI || (config.Kubernetes && config.KubernetesVirtualGPUs) {
 		slog.InfoContext(ctx, "Cleaning up NVML resources", slog.Uint64("reload_id", reloadID))
 		nvmlprovider.Client().Cleanup()
 
@@ -1062,6 +1070,10 @@ func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
 }
 
 func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
+	if c.Bool(CLIOCI) && c.Bool(CLIKubernetes) {
+		return nil, fmt.Errorf("--%s and --%s are mutually exclusive", CLIOCI, CLIKubernetes)
+	}
+
 	gOpt, err := parseDeviceOptions(c.String(CLIGPUDevices))
 	if err != nil {
 		return nil, err
@@ -1086,6 +1098,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		CollectorsFile:                   c.String(CLIFieldsFile),
 		Address:                          c.String(CLIAddress),
 		CollectInterval:                  c.Int(CLICollectInterval),
+		OCI:                              c.Bool(CLIOCI),
 		Kubernetes:                       c.Bool(CLIKubernetes),
 		KubernetesEnablePodLabels:        c.Bool(CLIKubernetesEnablePodLabels),
 		KubernetesEnablePodUID:           c.Bool(CLIKubernetesEnablePodUID),

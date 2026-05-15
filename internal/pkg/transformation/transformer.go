@@ -23,6 +23,11 @@ import (
 // GetTransformations return list of transformation applicable for metrics
 func GetTransformations(c *appconfig.Config) []Transform {
 	var transformations []Transform
+	if c.OCI {
+		ociMapper := newOCIMapper(c)
+		transformations = append(transformations, ociMapper)
+	}
+
 	if c.Kubernetes {
 		podMapper := NewPodMapper(c)
 		transformations = append(transformations, podMapper)

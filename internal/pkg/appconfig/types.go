@@ -42,6 +42,7 @@ type Config struct {
 	CollectorsFile                   string
 	Address                          string
 	CollectInterval                  int
+	OCI                              bool
 	Kubernetes                       bool
 	KubernetesEnablePodLabels        bool
 	KubernetesEnablePodUID           bool
